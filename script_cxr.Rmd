@@ -1,0 +1,1185 @@
+---
+title: "Comparison of TB CXR diagnoses between different readers"
+author: " Bernard Melingui & Samuel Beneteau"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+    number_sections: yes
+    fig_caption: yes
+    fig_width: 8
+    fig_height: 4
+  
+vignette: "%\\VignetteIndexEntry{CXR} %\\VignetteEngine{knitr::rmarkdown} %\\VignetteEncoding{UTF-8}\n"
+link-citations: yes
+linkcolor: blue
+
+knit: (function(inputFile, encoding) { 
+      rmarkdown::render(inputFile,
+                    encoding=encoding, 
+                    output_file=paste(Sys.Date(),"_analysis.html", sep=""),
+                    output_dir="output/")})
+---
+
+<style type="text/css">
+.main-container {
+  max-width: 1800px !important;
+  margin-left: auto;
+  margin-right: auto;
+}
+</style>
+
+```{r setup, include = FALSE}
+#bibliography: Citation.bib
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  warning=F,
+  message=F,
+  comment = "#>"
+)
+```
+
+
+# Introduction
+
+Analyse réalisée avec R [@R-citation], les packages utilisés sont les suivants :
+
+```{r, echo=F}
+library(readxl)
+library(data.table)
+library(car)
+library(forcats)
+library(lme4)
+library(caret)
+library(gtsummary)
+library(dplyr)
+library(performance)
+library(MuMIn)
+library(knitr)
+library(binom)
+library(epiR)
+library(kableExtra)
+library(flextable)
+```
+
+# Import des fichiers
+
+```{r, echo=F}
+dt.one <- read_excel("data/CXR_Reading_clinician_vs_national Reader.20230803.xlsx")
+dt.one <- as.data.table(dt.one)
+
+dt.two <- read_excel("data/CXR_Reading_clinician_vs_SPI.xlsx")
+dt.two <- as.data.table(dt.two)
+
+#table(dt.one$NationalReader.result)
+```
+
+# Jointure
+
+```{r, echo=F}
+dt.two <- dt.two[, c("Patient ID", "SPI.quality", "SPI.result", "SPI.alveolar_opacity", "SPI.miliary", "SPI.cavitation",
+                     "SPI.enlarged_lymph_nodes","SPI.airway_compression", "SPI.pleural_effusion"), with=F]
+
+dt.final <- dt.one[dt.two, on="Patient ID"]
+
+rm(dt.one, dt.two)
+
+#lapply(dt.final, unique)
+```
+
+
+# Pré-traitement
+
+```{r, echo=F}
+dt.final$CXR_DAT <- NULL  
+dt.final[dt.final == "acceptable"] <- "Acceptable"
+
+dt.final[dt.final == "unacceptable"] <- "Unacceptable"
+
+dt.final[dt.final == "not suggestive of TB"] <- "Not suggestive of TB"
+dt.final[dt.final == "no"] <- "No"
+dt.final[dt.final == "yes"] <- "Yes"
+dt.final[dt.final == "NO"] <- "No"
+dt.final[dt.final == "not readable"] <- "Not readable"
+dt.final[dt.final == "suggestive of TB"] <- "Suggestive of TB"
+dt.final[dt.final == "readable"] <- "Readable"
+dt.final[dt.final == "Not suggested of TB"] <- "Not suggestive of TB"
+dt.final[dt.final == "Suggested of TB"] <- "Suggestive of TB"
+
+dt.final[dt.final == "NR"] <- "Not readable"
+dt.final[dt.final == "missing"] <- NA
+
+for(i in c("acceptable*","acepptable","aceptable")){
+  dt.final[dt.final == i] <- "Acceptable"
+}
+
+for(i in c("non acceptable","Not acceptable","uacceptable", "unacceptaéble","unaccept", "inacceptable",
+           "not acceptable ", "not acceptable")){
+  dt.final[dt.final == i] <- "Unacceptable"
+}
+
+
+for(i in c("not suggested", "not  suggested", "not suggestive", "not ssuggestive of tb", "not sug",
+           "not ssuggestive", "not suggest.", "not sugg", "not sugget", "not suggest", "not sugges",
+           "not suggestive of tb", "not suggestiveof tb", "not suggesytive","Not suggestive of Tb",
+           "not suggestive*", "not suggestve", "Not Suggestive of TB")){
+  dt.final[dt.final == i] <- "Not suggestive of TB"
+}
+
+
+for(i in c("suggested of TB", "suggest of tb", "suggest*", "suggestive otb", "suggestive of tb",
+           "suggestive*","suggestive","suggestive of tb**","suggestive of Tb","sugestive of tb",
+           "suggestiveof TB", "suggestiveof tb", "sugges of tb")){
+  dt.final[dt.final == i] <- "Suggestive of TB"
+}
+
+for(i in c("not redeable", "not readable ( ?inspiration )", "Not read")){
+  dt.final[dt.final == i] <- "Not readable"
+}
+
+
+dt.final[NationalReader.result == "Unacceptable", NationalReader.result := NA]
+dt.final[NationalReader.quality == "Missing", NationalReader.quality := NA]
+
+#lapply(dt.final, unique)
+```
+
+
+```{r, echo=F}
+dt.final <- melt(dt.final,
+                 id.vars =c("Patient ID", "Country", "DISTRICT", "read_number"),
+                 measure.vars=c("Clinician.quality","Clinician.result", "SPI.quality", "SPI.result", "NationalReader.quality",
+                                "NationalReader.result","Clinician.alveolar_opacity","NationalReader.alveolar_opacity",
+                                "Clinician.miliary","NationalReader.miliary","Clinician.cavitation","NationalReader.cavitation",
+                                "Clinician.enlarged_lymph_nodes","NationalReader.enlarged_lymph_nodes","Clinician.airway_compression",
+                                "NationalReader.airway_compression","Clinician.pleural_effusion","NationalReader.pleural_effusion",
+                                "SPI.alveolar_opacity", "SPI.miliary", "SPI.cavitation", "SPI.enlarged_lymph_nodes",
+                                "SPI.airway_compression","SPI.pleural_effusion")
+)
+
+dt.final[, c("Readers", "Signs") := tstrsplit(variable, split=".", fixed = T)]
+
+fwrite(dt.final, "data/base_finale.csv")
+#table(dt.final$Clinician.result)
+```
+
+# Analyse
+
+```{r}
+dt.final <- fread("data/base_finale.csv")
+```
+
+## Radiographies description
+
+```{r}
+q <- dt.final[Readers == "Clinician" & (Signs != "quality" & Signs != "result")] %>%
+  dcast(`Patient ID` + Country + read_number ~ Signs,
+        value.var = "value",
+        fun.aggregate = function(x){sum(x == "Yes", na.rm=T)})
+
+q[q == 1] <- "Yes"
+q[q == 2] <- "Yes"
+q[q == 0] <- "No"
+```
+
+
+```{r}
+q %>%
+  tbl_summary(
+    include=-c("Patient ID", "Country"),
+    by = read_number,
+    type = everything() ~ "categorical",
+    statistic = all_categorical() ~ "{p} % ({n}/{N})",
+    missing="ifany"
+  ) %>% add_overall(last=T)
+```
+
+```{r}
+q2 <- dt.final[Readers == "Clinician" & Signs == "result"]
+q3 <- dt.final[Readers == "Clinician" & (Signs != "quality" & Signs != "result")]
+q2 <- q2[q3, on=c("Patient ID", "Country", "Readers", "read_number")]
+
+q2 <- dcast(q2, `Patient ID` + read_number + value ~ i.Signs,
+        value.var = "i.value",
+        fun.aggregate = function(x){sum(x == "Yes", na.rm=T)})
+
+q2[q2 == 0] <- "No"
+q2[q2 == 1] <- "Yes"
+q2[q2 == 4] <- "Yes"
+
+a<- q2 %>%
+  tbl_strata(
+    strata = read_number,
+    .tbl_fun =
+      ~ .x %>%
+      tbl_summary(
+        include=-`Patient ID`,
+        by = value,
+        type = everything() ~ "categorical",
+        statistic = all_categorical() ~ " {n} ({p} %)",
+        missing="ifany"
+      ))
+a
+#save_as_docx(a %>% as_flex_table(), path = "table_descr.docx")
+```
+
+## Clinician versus SPI
+
+### By Signs
+
+```{r, echo=F, fig.show='hold'}
+c <- dt.final[Signs != "quality"][value != "Not readable"]
+c <- dcast(c, `Patient ID`+ Signs ~ Readers, value.var = "value", fun.aggregate = unique, fill=NA)
+c <- c[, .(`Patient ID`, Signs, Clinician, SPI)]
+```
+
+#### Contingency table
+
+```{r, echo=F}
+b <- c[Signs != "result"]
+
+by.sign <- b %>%
+  tbl_strata(
+    strata = Signs,
+    .tbl_fun =
+      ~ .x %>%
+      tbl_summary(
+        include=-`Patient ID`,
+        by = SPI,
+        type = everything() ~ "categorical",
+        statistic = all_categorical() ~ "{p} % ({n}/{N})",
+        missing="ifany"
+      ))
+
+all.sign <- b[, Signs:="All"] %>%
+  tbl_strata(
+    strata = Signs,
+    .tbl_fun =
+      ~ .x %>%
+      tbl_summary(
+        include=-`Patient ID`,
+        by = SPI,
+        type = everything() ~ "categorical",
+        statistic = all_categorical() ~ "{p} % ({n}/{N})",
+        missing="ifany"
+      ))
+
+tbl_merge(list(all.sign, by.sign), tab_spanner = F)
+```
+
+
+#### Performances with epi package
+
+```{r, echo=F}
+c.sign <- c[Signs != "result"]
+c.sign[, Clinician := factor(Clinician, levels=c("Yes", "No"))]
+c.sign[, SPI := factor(SPI, levels=c("Yes", "No"))]
+
+all.sign <- list(
+  table(c.sign$Clinician, c.sign$SPI)
+  )
+
+by.sign <- lapply(unique(c.sign$Signs), function(x){
+  table(c.sign[Signs == x]$Clinician, c.sign[Signs == x]$SPI)
+})
+
+result <- lapply("result", function(x){
+  c <- c[Signs == x]
+  c[, Clinician := factor(Clinician, levels=c("Suggestive of TB", "Not suggestive of TB"))]
+  c[, SPI := factor(SPI, levels=c("Suggestive of TB", "Not suggestive of TB"))]
+  table(c$Clinician, c$SPI)
+})
+
+b <- c(all.sign, by.sign, result)
+
+names(b) <- c("All", unique(c.sign$Signs), "result")
+```
+
+
+```{r, echo=F}
+b.res <- lapply(b, epi.tests, conf.level = 0.95, method = "clopper-pearson")
+
+b.res <- lapply(b.res, function(x){
+  q <- as.data.table(x$detail)
+  q <- q[, lapply(.SD, round, 2), by= .(statistic)]
+  q 
+})
+
+b.res <- lapply(b.res, function(x){
+  x[, all := paste(est, " [", lower, "-", upper, "]", sep="")]
+})
+
+
+b.res <- rbindlist(b.res, idcol = T)
+
+dcast(b.res, statistic ~ .id, value.var = "all") %>% kable %>% kable_styling
+```
+
+```{r}
+c.res <- lapply(b, epi.kappa)
+
+c.res <- lapply(c.res, rbindlist, fill=T, idcol="param")
+
+c.res <- c.res %>% rbindlist(idcol=T) %>%
+  .[param %in% c("pabak", "kappa")] %>%
+  .[, .(.id, param, est = round(est, 2), lower = round(lower, 2), upper = round(upper, 2))]
+
+c.res[, all := paste(est, " [", lower, "-", upper, "]", sep="")]
+
+dcast(c.res, param ~ .id, value.var = "all") %>% kable %>% kable_styling
+```
+
+
+### By Signs and Country
+
+```{r, echo=F}
+dt.country <- dt.final[Signs != "quality"][value != "Not readable"]
+
+dt.country.sign <- dt.country[Signs != "result"] %>% dcast(`Patient ID`+ Country + Signs ~ Readers,
+                                                           value.var = "value",
+                                                           fun.aggregate = unique,
+                                                           fill=NA)
+
+dt.country.sign <- dt.country.sign %>% dcast(`Patient ID`+ Country + SPI ~ Signs,
+                                             value.var = "Clinician",
+                                             fun.aggregate = unique,
+                                             fill=NA)
+
+dt.country.sign %>%
+  tbl_strata(
+    strata = Country,
+    .tbl_fun =
+      ~ .x %>%
+      tbl_summary(
+        include=-`Patient ID`,
+        by = SPI,
+        type = everything() ~ "categorical",
+        statistic = all_categorical() ~ "{p} % ({n}/{N})",
+        missing="ifany"
+      ))
+```
+
+```{r, echo=F}
+dt.country.result <- dt.country[Signs == "result"] %>% dcast(`Patient ID`+ Country + Signs ~ Readers,
+                                                             value.var = "value",
+                                                             fun.aggregate = unique,
+                                                             fill=NA)
+
+dt.country.result <- dt.country.result %>% dcast(`Patient ID`+ Country + SPI ~ Signs,
+                                                 value.var = "Clinician",
+                                                 fun.aggregate = unique,
+                                                 fill=NA)
+
+dt.country.result %>%
+  tbl_strata(
+    strata = Country,
+    .tbl_fun =
+      ~ .x %>%
+      tbl_summary(
+        include=-`Patient ID`,
+        by = SPI,
+        type = everything() ~ "categorical",
+        statistic = all_categorical() ~ "{p} % ({n}/{N})",
+        missing="ifany"
+      ))
+```
+
+
+```{r echo=F, message=FALSE, warning=FALSE}
+dt.country.reader <- dt.country %>%  dcast(`Patient ID`+ Country + Signs + read_number ~ Readers,
+                                           value.var = "value",
+                                           fun.aggregate = unique,
+                                           fill=NA)
+
+a <- unique(dt.country.reader[, .(Country, Signs)])
+e <- unique(dt.country.reader[, .(read_number, Signs)])
+
+list.tbl <- lapply(1:nrow(a), function(x){
+  dt.temp <- dt.country.reader[Country == a$Country[[x]] & Signs == a$Signs[[x]]]
+  dt.temp[, Clinician := factor(Clinician, levels = rev(sort(unique(Clinician))))]
+  dt.temp[, SPI := factor(SPI, levels = rev(sort(unique(SPI))))]
+  table(dt.temp$Clinician, dt.temp$SPI)
+})
+
+list.tbl <- lapply(list.tbl, epi.tests, conf.level = 0.95, method = "clopper-pearson")
+
+list.tbl <- lapply(list.tbl, function(x){ as.data.table(x$detail) })
+
+result.country <- rbindlist(list.tbl)
+
+result.country[, Country := rep(a$Country, each=18)]
+result.country[, Signs := rep(a$Signs, each=18)]
+
+result.country[, ci := paste(round(est, 2), " [", round(lower, 2), "-", round(upper, 2), "]", sep="")]
+
+dcast(result.country, statistic + Country ~ Signs, value.var = "ci") %>% kable %>% kable_styling
+```
+
+
+```{r, echo=F}
+w <- result.country[Signs != "result" & statistic %in% c("se", "sp")][order(Country)]
+w <- result.country[Signs != "result" & statistic %in% "se"][order(Country)]
+
+ggplot(data=w, aes(x= Country, fill=Signs, y=est)) +
+  geom_bar(stat="identity",position = "dodge")+
+   scale_fill_brewer(palette="Paired")+
+  theme_minimal() +
+  scale_fill_grey() +
+  ylab("Sensitivity")
+w1 <- result.country[Signs != "result" & statistic %in% "sp"][order(Country)]
+
+ggplot(data=w1, aes(x= Country, fill=Signs, y=est)) +
+  geom_bar(stat="identity",position = "dodge")+
+   scale_fill_brewer(palette="Paired")+
+  theme_minimal() +
+  scale_fill_grey() +
+  ylab("Specificity")
+
+```
+
+
+```{r, echo=F}
+w <- result.country[Signs == "result" & statistic %in% c("se", "sp")][order(Country)]
+
+dt.bp <- dcast(w, statistic ~ Country, value.var="est")
+dt.bp <- as.matrix(dt.bp, rownames=T)
+
+ci.w <- 0.05
+
+par(mar=c(2, 5, 2, 5), xpd=T)
+bp <- barplot(dt.bp, ylab="Value", cex.names=0.8, ylim=c(0,1), beside=T, col=c("gray", "grey50"))
+
+legend("right",
+       legend = c("Sensibility", "Specificity"),
+       col=c("gray", "grey50"),
+       pch = 15,
+       bty = "n",
+       pt.cex = 2,
+       cex = 0.7,
+       horiz = F, inset = c(-0.15, 0))
+
+bp <- as.vector(bp)
+segments(bp-ci.w, w$lower, bp+ci.w, w$lower, lwd = 1.5)
+segments(bp-ci.w, w$upper, bp+ci.w, w$upper, lwd = 1.5)
+segments(bp, w$lower, bp, w$upper, lwd = 1.5)
+```
+
+### Result by Read Number
+
+```{r, echo=F}
+c <- dt.final[Signs == "result"][value != "Not readable"]
+c <- dcast(c, `Patient ID`+ read_number ~ Readers, value.var = "value", fun.aggregate = unique, fill=NA)
+c <- c[, .(`Patient ID`, read_number, Clinician, SPI)]
+
+
+w <- lapply(unique(c$read_number), function(x){
+  c <- c[read_number == x]
+  c[, Clinician := factor(Clinician, levels=c("Suggestive of TB", "Not suggestive of TB"))]
+  c[, SPI := factor(SPI, levels=c("Suggestive of TB", "Not suggestive of TB"))]
+  table(c$Clinician, c$SPI)
+})
+
+w <- lapply(w, epi.tests, conf.level = 0.95, method = "clopper-pearson")
+names(w) <- unique(c$read_number)
+
+
+w <- lapply(w, function(x){
+  as.data.table(x$detail)
+})
+
+w <- rbindlist(w, idcol = T)
+```
+
+```{r, echo=F}
+w <- w[statistic %in% c("se", "sp")]
+w %>% kable %>% kable_styling
+```
+
+```{r, echo=F}
+dt.bp <- dcast(w, statistic ~ .id, value.var="est")
+dt.bp <- as.matrix(dt.bp, rownames=T)
+
+ci.w <- 0.05
+
+par(mar=c(2, 5, 2, 5), xpd=T)
+bp <- barplot(dt.bp, ylab="Value", cex.names=0.8, ylim=c(0,1), beside=T, col=c("gray", "grey50"))
+
+legend("right",
+       legend = c("Sensibility", "Specificity"),
+       col=c("gray", "grey50"),
+       pch = 15,
+       bty = "n",
+       pt.cex = 2,
+       cex = 0.7,
+       horiz = F, inset = c(-0.15, 0))
+
+bp <- as.vector(bp)
+segments(bp-ci.w, w$lower, bp+ci.w, w$lower, lwd = 1.5)
+segments(bp-ci.w, w$upper, bp+ci.w, w$upper, lwd = 1.5)
+segments(bp, w$lower, bp, w$upper, lwd = 1.5)
+```
+
+```{r}
+dt.bp <- as.data.table(t(dt.bp))
+dt.bp[, x := 1:4]
+
+lm(dt.bp$se ~ dt.bp$x) %>% summary
+
+lm(dt.bp$sp ~ dt.bp$x) %>% summary
+```
+
+## Clinician versus National Reader
+
+### By signs
+
+```{r, echo=F}
+c <- dt.final[Signs != "quality"][value != "Not readable"]
+c <- dcast(c, `Patient ID`+ Signs ~ Readers, value.var = "value", fun.aggregate = unique, fill=NA)
+c <- c[, .(`Patient ID`, Signs, Clinician, NationalReader)]
+```
+
+#### Contingency table
+
+```{r, echo=F}
+b <- c[Signs != "result"]
+
+by.sign <- b %>%
+  tbl_strata(
+    strata = Signs,
+    .tbl_fun =
+      ~ .x %>%
+      tbl_summary(
+        include=-`Patient ID`,
+        by = NationalReader,
+        type = everything() ~ "categorical",
+        statistic = all_categorical() ~ "{p} % ({n}/{N})",
+        missing="ifany"
+      ))
+
+all.sign <- b[, Signs:="All"] %>%
+  tbl_strata(
+    strata = Signs,
+    .tbl_fun =
+      ~ .x %>%
+      tbl_summary(
+        include=-`Patient ID`,
+        by = NationalReader,
+        type = everything() ~ "categorical",
+        statistic = all_categorical() ~ "{p} % ({n}/{N})",
+        missing="ifany"
+      ))
+
+tbl_merge(list(all.sign, by.sign), tab_spanner = F)
+```
+
+
+#### Performances with epi package
+
+```{r, echo=F}
+c.sign <- c[Signs != "result"]
+c.sign[, Clinician := factor(Clinician, levels=c("Yes", "No"))]
+c.sign[, NationalReader := factor(NationalReader, levels=c("Yes", "No"))]
+
+all.sign <- list(
+  table(c.sign$Clinician, c.sign$NationalReader)
+  )
+
+by.sign <- lapply(unique(c.sign$Signs), function(x){
+  table(c.sign[Signs == x]$Clinician, c.sign[Signs == x]$NationalReader)
+})
+
+result <- lapply("result", function(x){
+  c = c[Signs == x]
+  c[, Clinician := factor(Clinician, levels=c("Suggestive of TB", "Not suggestive of TB"))]
+  c[, NationalReader := factor(NationalReader, levels=c("Suggestive of TB", "Not suggestive of TB"))]
+  table(c$Clinician, c$NationalReader)
+})
+
+b <- c(all.sign, by.sign, result)
+
+names(b) <- c("All", unique(c.sign$Signs), "result")
+```
+
+
+```{r, echo=F}
+b.res <- lapply(b, epi.tests, conf.level = 0.95, method = "clopper-pearson")
+
+b.res <- lapply(b.res, function(x){
+  q <- as.data.table(x$detail)
+  q <- q[, lapply(.SD, round, 2), by= .(statistic)]
+  q 
+})
+
+b.res <- lapply(b.res, function(x){
+  x[, all := paste(est, " [", lower, "-", upper, "]", sep="")]
+})
+
+
+b.res <- rbindlist(b.res, idcol = T)
+
+dcast(b.res, statistic ~ .id, value.var = "all") %>% kable %>% kable_styling
+```
+
+```{r}
+c.res <- lapply(b, epi.kappa)
+
+c.res <- lapply(c.res, rbindlist, fill=T, idcol="param")
+
+c.res <- c.res %>% rbindlist(idcol=T) %>%
+  .[param %in% c("pabak", "kappa")] %>%
+  .[, .(.id, param, est = round(est, 2), lower = round(lower, 2), upper = round(upper, 2))]
+
+c.res[, all := paste(est, " [", lower, "-", upper, "]", sep="")]
+
+dcast(c.res, param ~ .id, value.var = "all") %>% kable %>% kable_styling
+```
+
+### By Signs and Country
+
+```{r, echo=F}
+dt.country.sign <- dt.country[Signs != "result"] %>% dcast(`Patient ID`+ Country + Signs ~ Readers,
+                                                           value.var = "value",
+                                                           fun.aggregate = unique,
+                                                           fill=NA)
+
+dt.country.sign <- dt.country.sign %>% dcast(`Patient ID`+ Country + NationalReader ~ Signs,
+                                             value.var = "Clinician",
+                                             fun.aggregate = unique,
+                                             fill=NA)
+
+dt.country.sign %>%
+  tbl_strata(
+    strata = Country,
+    .tbl_fun =
+      ~ .x %>%
+      tbl_summary(
+        include=-`Patient ID`,
+        by = NationalReader,
+        type = everything() ~ "categorical",
+        statistic = all_categorical() ~ "{p} % ({n}/{N})",
+        missing="ifany"
+      ))
+```
+
+```{r, echo=F}
+dt.country.result = dt.country[Signs == "result"] %>% dcast(`Patient ID`+ Country + Signs ~ Readers,
+                                                            value.var = "value",
+                                                            fun.aggregate = unique,
+                                                            fill=NA)
+
+dt.country.result = dt.country.result %>% dcast(`Patient ID`+ Country + NationalReader ~ Signs,
+                                                value.var = "Clinician",
+                                                fun.aggregate = unique,
+                                                fill=NA)
+
+dt.country.result %>%
+  tbl_strata(
+    strata = Country,
+    .tbl_fun =
+      ~ .x %>%
+      tbl_summary(
+        include=-`Patient ID`,
+        by = NationalReader,
+        type = everything() ~ "categorical",
+        statistic = all_categorical() ~ "{p} % ({n}/{N})",
+        missing="ifany"
+      ))
+```
+
+
+
+```{r, echo=F}
+list.tbl <- lapply(1:nrow(a), function(x){
+  dt.temp <- dt.country.reader[Country == a$Country[[x]] & Signs == a$Signs[[x]]]
+  dt.temp[, Clinician := factor(Clinician, levels = rev(sort(unique(Clinician))))]
+  dt.temp[, NationalReader := factor(NationalReader, levels = rev(sort(unique(NationalReader))))]
+  table(dt.temp$Clinician, dt.temp$NationalReader)
+})
+
+list.tbl <- lapply(list.tbl, epi.tests, conf.level = 0.95, method = "clopper-pearson")
+
+list.tbl <- lapply(list.tbl, function(x){ as.data.table(x$detail) })
+
+result.country <- rbindlist(list.tbl)
+
+result.country[, Country := rep(a$Country, each=18)]
+result.country[, Signs := rep(a$Signs, each=18)]
+
+result.country[, ci := paste(round(est, 2), " [", round(lower, 2), "-", round(upper, 2), "]", sep="")]
+
+dcast(result.country, statistic + Country ~ Signs, value.var = "ci") %>% kable %>% kable_styling
+
+```
+
+# analyses by EQA and radiological lesions
+```{r, echo=F}
+list.tbl <- lapply(1:nrow(e), function(x){
+  dt.temp <- dt.country.reader[read_number == e$read_number[[x]] & Signs == e$Signs[[x]]]
+  dt.temp[, Clinician := factor(Clinician, levels = rev(sort(unique(Clinician))))]
+  dt.temp[, NationalReader := factor(NationalReader, levels = rev(sort(unique(NationalReader))))]
+  table(dt.temp$Clinician, dt.temp$NationalReader)
+})
+
+list.tbl <- lapply(list.tbl, epi.tests, conf.level = 0.95, method = "clopper-pearson")
+
+list.tbl <- lapply(list.tbl, function(x){ as.data.table(x$detail) })
+
+result.number <- rbindlist(list.tbl)
+
+result.number[, read_number := rep(e$read_number, each=18)]
+result.number[, Signs := rep(e$Signs, each=18)]
+
+result.number[, ci := paste(round(est, 2), " [", round(lower, 2), "-", round(upper, 2), "]", sep="")]
+
+dcast(result.number, statistic + read_number ~ Signs, value.var = "ci") %>% kable %>% kable_styling
+
+
+
+```
+
+```{r, echo=F}
+w <- result.country[Signs == "result" & statistic %in% c("se", "sp")][order(Country)]
+
+dt.bp <- dcast(w, statistic ~ Country, value.var="est")
+dt.bp <- as.matrix(dt.bp, rownames=T)
+
+ci.w <- 0.05
+
+par(mar=c(2, 5, 2, 5), xpd=T)
+bp <- barplot(dt.bp, ylab="Value", cex.names=0.8, ylim=c(0,1), beside=T, col=c("gray", "grey50"))
+
+legend("right",
+       legend = c("Sensibility", "Specificity"),
+       col=c("gray", "grey50"),
+       pch = 15,
+       bty = "n",
+       pt.cex = 2,
+       cex = 0.7,
+       horiz = F, inset = c(-0.15, 0))
+
+bp <- as.vector(bp)
+segments(bp-ci.w, w$lower, bp+ci.w, w$lower, lwd = 1.5)
+segments(bp-ci.w, w$upper, bp+ci.w, w$upper, lwd = 1.5)
+segments(bp, w$lower, bp, w$upper, lwd = 1.5)
+```
+
+
+### Result by Read Number
+
+```{r, echo=F}
+c <- dt.final[Signs == "result"][value != "Not readable"]
+c <- dcast(c, `Patient ID`+ read_number ~ Readers, value.var = "value", fun.aggregate = unique, fill=NA)
+c <- c[, .(`Patient ID`, read_number, Clinician, NationalReader)]
+
+
+w <- lapply(unique(c$read_number), function(x){
+  c <- c[read_number == x]
+  c[, Clinician := factor(Clinician, levels=c("Suggestive of TB", "Not suggestive of TB"))]
+  c[, NationalReader := factor(NationalReader, levels=c("Suggestive of TB", "Not suggestive of TB"))]
+  table(c$Clinician, c$NationalReader)
+})
+
+w <- lapply(w, epi.tests, conf.level = 0.95, method = "clopper-pearson")
+names(w) <- unique(c$read_number)
+
+
+w <- lapply(w, function(x){
+  as.data.table(x$detail)
+})
+
+w <- rbindlist(w, idcol = T)
+```
+
+
+```{r, echo=F}
+w <- w[statistic %in% c("se", "sp")]
+w %>% kable %>% kable_styling
+```
+
+```{r, echo=F}
+dt.bp <- dcast(w, statistic ~ .id, value.var="est")
+dt.bp <- as.matrix(dt.bp, rownames=T)
+
+ci.w <- 0.05
+
+par(mar=c(2, 5, 2, 5), xpd=T)
+bp <- barplot(dt.bp, ylab="Value", cex.names=0.8, ylim=c(0,1), beside=T, col=c("gray", "grey50"))
+
+legend("right",
+       legend = c("Sensibility", "Specificity"),
+       col=c("gray", "grey50"),
+       pch = 15,
+       bty = "n",
+       pt.cex = 2,
+       cex = 0.7,
+       horiz = F, inset = c(-0.15, 0))
+
+bp <- as.vector(bp)
+segments(bp-ci.w, w$lower, bp+ci.w, w$lower, lwd = 1.5)
+segments(bp-ci.w, w$upper, bp+ci.w, w$upper, lwd = 1.5)
+segments(bp, w$lower, bp, w$upper, lwd = 1.5)
+```
+
+
+```{r}
+dt.bp <- as.data.table(t(dt.bp))
+dt.bp[, x := 1:4]
+
+lm(dt.bp$se ~ dt.bp$x) %>% summary
+
+lm(dt.bp$sp ~ dt.bp$x) %>% summary
+```
+
+
+### By read number and Country
+
+```{r, echo=F}
+dt.country.read <- dt.country[Signs != "result"] %>% dcast(`Patient ID`+ Country + read_number ~ Readers,
+                                                           value.var = "value",
+                                                           fun.aggregate = unique,
+                                                           fill=NA)
+
+dt.country.read <- dt.country.read %>% dcast(`Patient ID`+ Country + NationalReader ~ read_number,
+                                             value.var = "Clinician",
+                                             fun.aggregate = unique,
+                                             fill=NA)
+
+dt.country.read %>%
+  tbl_strata(
+    strata = Country,
+    .tbl_fun =
+      ~ .x %>%
+      tbl_summary(
+        include=-`Patient ID`,
+        by = NationalReader,
+        type = everything() ~ "categorical",
+        statistic = all_categorical() ~ "{p} % ({n}/{N})",
+        missing="ifany"
+      ))
+```
+
+```{r, echo=F}
+dt.country.read <- dt.country[Signs == "result"] %>% dcast(`Patient ID`+ Country + read_number ~ Readers,
+                                                           value.var = "value",
+                                                           fun.aggregate = unique,
+                                                           fill=NA)
+```
+
+
+
+```{r, echo=F}
+a <- dt.country.read[, .(Country, read_number)] %>% unique
+
+list.tbl <- lapply(1:nrow(a), function(x){
+  dt.temp <- dt.country.read[Country == a$Country[[x]] & read_number == a$read_number[[x]]]
+  dt.temp[, Clinician := factor(Clinician, levels = rev(sort(unique(Clinician))))]
+  dt.temp[, NationalReader := factor(NationalReader, levels = rev(sort(unique(NationalReader))))]
+  table(dt.temp$Clinician, dt.temp$NationalReader)
+})
+
+list.tbl <- lapply(list.tbl, epi.tests, conf.level = 0.95, method = "clopper-pearson")
+
+list.tbl <- lapply(list.tbl, function(x){ as.data.table(x$detail) })
+
+result.country <- rbindlist(list.tbl)
+
+result.country[, Country := rep(a$Country, each=18)]
+result.country[, read_number := rep(a$read_number, each=18)]
+
+result.country[, ci := paste(round(est, 2), " [", round(lower, 2), "-", round(upper, 2), "]", sep="")]
+
+dcast(result.country, statistic + Country ~ read_number, value.var = "ci") %>% kable %>% kable_styling
+```
+
+
+```{r, echo=F}
+result.country[statistic %in% c("se", "sp")] %>%
+  ggplot( aes(x=read_number, y=est, fill=Country)) +
+  geom_bar(position  = "dodge", stat = "identity") +
+  geom_errorbar(aes(ymin=lower, ymax=upper), position  = "dodge") +
+  ylab("value") +
+  facet_wrap(~statistic)
+```
+
+
+#### Characteristic of FN and FP
+
+```{r}
+c <- dt.final[Signs != "result"]
+c <- dcast(c, `Patient ID`+ Country + read_number + Signs ~ Readers, value.var = "value", fun.aggregate = unique, fill=NA)
+
+c[Clinician == "Yes" & NationalReader == "No", Status := "FP"]
+c[Clinician == "No" & NationalReader == "Yes", Status := "FN"]
+```
+
+```{r}
+c %>%
+  tbl_summary(
+    include=-c(`Patient ID`, Clinician, NationalReader, SPI),
+    by = Status,
+    type = everything() ~ "categorical",
+    statistic = all_categorical() ~ "{p} % ({n}/{N})",
+    missing="ifany"
+  ) %>% add_overall(last=T)
+```
+
+```{r}
+c %>%
+  tbl_strata(
+    strata = Country,
+    .tbl_fun =
+      ~ .x %>%
+  tbl_summary(
+    include=-c(`Patient ID`, Clinician, NationalReader, SPI),
+    by = Status,
+    type = everything() ~ "categorical",
+    statistic = all_categorical() ~ "{p} % ({n}/{N})",
+    missing="ifany"
+  ))
+```
+
+Caracteristiques des discordances :
+
+```{r}
+c[, signs.read := paste(Signs, read_number) %>% as.factor]
+
+c <- c[order(signs.read)]
+
+c %>%
+  tbl_strata(
+    strata = Country,
+    .tbl_fun =
+      ~ .x %>%
+  tbl_summary(
+    include=-c(`Patient ID`, Clinician, NationalReader, SPI, Signs, read_number),
+    by = Status,
+    type = everything() ~ "categorical",
+    statistic = all_categorical() ~ "{p} % ({n}/{N})",
+    missing="ifany"
+  ))
+
+
+c[Status %in% c("FP", "FN")] %>%
+  tbl_summary(
+    include=-c(`Patient ID`, Clinician, NationalReader, SPI, Signs, read_number),
+    by = Country,
+    type = everything() ~ "categorical",
+    statistic = all_categorical() ~ "{p} % ({n}/{N})",
+    missing="ifany"
+  )
+```
+
+
+## National Reader versus SPI
+
+### By signs
+
+```{r, echo=F}
+c <- dt.final[Signs != "quality"][value != "Not readable"]
+c <- dcast(c, `Patient ID`+ Signs ~ Readers, value.var = "value", fun.aggregate = unique, fill=NA)
+c <- c[, .(`Patient ID`, Signs, SPI, NationalReader)]
+```
+
+#### Contingency table
+
+```{r, echo=F}
+b <- c[Signs != "result"]
+
+by.sign <- b %>%
+  tbl_strata(
+    strata = Signs,
+    .tbl_fun =
+      ~ .x %>%
+      tbl_summary(
+        include=-`Patient ID`,
+        by = NationalReader,
+        type = everything() ~ "categorical",
+        statistic = all_categorical() ~ "{p} % ({n}/{N})",
+        missing="ifany"
+      ))
+
+all.sign <- b[, Signs:="All"] %>%
+  tbl_strata(
+    strata = Signs,
+    .tbl_fun =
+      ~ .x %>%
+      tbl_summary(
+        include=-`Patient ID`,
+        by = NationalReader,
+        type = everything() ~ "categorical",
+        statistic = all_categorical() ~ "{p} % ({n}/{N})",
+        missing="ifany"
+      ))
+
+tbl_merge(list(all.sign, by.sign), tab_spanner = F)
+```
+
+
+#### Performances with epi package
+
+```{r, echo=F}
+c.sign <- c[Signs != "result"]
+c.sign[, SPI := factor(SPI, levels=c("Yes", "No"))]
+c.sign[, NationalReader := factor(NationalReader, levels=c("Yes", "No"))]
+
+all.sign <- list(
+  table(c.sign$NationalReader, c.sign$SPI)
+  )
+
+by.sign <- lapply(unique(c.sign$Signs), function(x){
+  table(c.sign[Signs == x]$NationalReader, c.sign[Signs == x]$SPI)
+})
+
+result <- lapply("result", function(x){
+  c <- c[Signs == x]
+  c[, SPI := factor(SPI, levels=c("Suggestive of TB", "Not suggestive of TB"))]
+  c[, NationalReader := factor(NationalReader, levels=c("Suggestive of TB", "Not suggestive of TB"))]
+  table(c$NationalReader, c$SPI)
+})
+
+b <- c(all.sign, by.sign, result)
+
+names(b) <- c("All", unique(c.sign$Signs), "result")
+```
+
+
+```{r, echo=F}
+b.res <- lapply(b, epi.tests, conf.level = 0.95, method = "clopper-pearson")
+
+b.res <- lapply(b.res, function(x){
+  q <- as.data.table(x$detail)
+  q <- q[, lapply(.SD, round, 2), by= .(statistic)]
+  q 
+})
+
+b.res <- lapply(b.res, function(x){
+  x[, all := paste(est, " [", lower, "-", upper, "]", sep="")]
+})
+
+
+b.res <- rbindlist(b.res, idcol = T)
+
+dcast(b.res, statistic ~ .id, value.var = "all") %>% kable %>% kable_styling
+```
+
+```{r}
+c.res <- lapply(b, epi.kappa)
+
+c.res <- lapply(c.res, rbindlist, fill=T, idcol="param")
+
+c.res <- c.res %>% rbindlist(idcol=T) %>%
+  .[param %in% c("pabak", "kappa")] %>%
+  .[, .(.id, param, est = round(est, 2), lower = round(lower, 2), upper = round(upper, 2))]
+
+c.res[, all := paste(est, " [", lower, "-", upper, "]", sep="")]
+
+dcast(c.res, param ~ .id, value.var = "all") %>% kable %>% kable_styling
+```
+
+
+
+# Supplementary Tables
+
+
+```{r}
+dt.site <- fread("data/siteid.csv", encoding = "Latin-1", na.strings = "")
+
+dt.decent <- fread("data/CRFDECENTRALIZATIONM_DATA_LABELS_2023-05-09_1244.csv", na.strings = "", encoding="Latin-1")
+
+#library(REDCapR)
+#dt.decent <- redcap_read(redcap_uri = "https://tb-speed.credim.u-bordeaux.fr/redcap_v13.1.16/API/",
+#                          token = "7A2D04F0B8537C9350C43DE9FF92E618",
+ #                         raw_or_label = "label")$data
+#names(dt.decent)
+
+dt.decent <- dt.decent[`Repeat Instrument` == "CHEST X-RAY", c(1, 36, 47)]
+
+names(dt.decent) <- c("patid", "Not performed", "result")
+
+dt.decent <- dt.decent[-which(`Not performed` == "Not performed / Não realizado / ??????????" & is.na(result))]
+
+dt.decent[, result := factor(result)]
+
+levels(dt.decent$result) <- c("Not readable", "Not suggestive", "Suggestive")
+
+dt.decent[, Code := substr(patid, 3, 5)]
+
+dt.decent <- dt.decent[dt.site, on ="Code"]
+
+dt.recap <- dcast(dt.decent, Country + District ~ result)
+
+dt.recap <- dt.decent[, .(Total = .N), by=.(Country, District)] %>%
+  .[dt.recap, on=c("Country", "District")]
+
+dt.recap[, Selected := Suggestive + `Not readable` + 0.1*`Not suggestive`]
+
+Tot <- dt.recap[, lapply(.SD, sum), .SDcols=names(dt.recap[, -c("Country", "District")])]
+
+dt.recap <- rbind(dt.recap, Tot, fill=T)
+```
+
+Nombre total de radios réalisées et sélectionnées pour l'étude :
+
+```{r}
+dt.recap %>% kable %>% kable_styling
+
+sum(dt.recap$Total - dt.recap$`NA`)
+
+#dt.decent[, .N, by=patid][N>1]
+```
+
+```{r}
+dt.final.site <- dt.final[Signs == "result" & Readers == "Clinician"]
+```
+
+
+Nombre de radio revues dans le cadre de l'étude :
+
+```{r}
+dt.final.site <- dt.final.site %>% dcast(Country + DISTRICT ~ value, value.var="Patient ID")
+
+Tot <- dt.final.site[, lapply(.SD, sum), .SDcols=names(dt.final.site[, -c("Country", "DISTRICT")])]
+
+dt.final.site <- rbind(dt.final.site, Tot, fill=T)
+
+dt.final.site[, Total := rowSums(dt.final.site[, -c("Country", "DISTRICT")])]
+
+dt.final.site %>% kable %>% kable_styling
+```
+
+
+# Lexique
+
+The following performance measures are returned:
+
+Notation | Definition
+--|--
+tp | True prevalence
+ap | Apparent prevalence
+se | Diagnostic test sensitivity
+sp | Diagnostic test specificity
+diag.ac	| Diagnostic accuracy (the correctly classified proportion)
+diag.or	| Diagnostic odds ratio
+nndx | The number needed to diagnose
+youden | Youden's index
+pv.pos | Positive predictive value
+pv.neg | Negative predictive value
+lr.pos | Likelihood ratio of a positive test
+lr.neg	| Likelihood ratio of a negative test
+p.rout | The proportion of subjects with the outcome ruled out
+p.rin	| The proportion of subjects with the outcome ruled in
+p.tpdn | The proportion of true outcome negative subjects that test positive (false T+ proportion for D-)
+p.tndp | The proportion of true outcome positive subjects that test negative (false T- proportion for D+)
+p.dntp | The proportion of test positive subjects that are outcome negative (false T+ proportion for T+)
+p.dptn | The proportion of test negative subjects that are outcome positive (false T- proportion for T-)
+
+# Session info
+
+```{r}
+sessionInfo()
+```
+
+
+# References
